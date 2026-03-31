@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /student/dashboard
+Allow: /student/login
+
+Sitemap: https://smartwheelsacademy.com/sitemap.xml
