@@ -1550,3 +1550,100 @@ textarea.form-input {
     display: block;
   }
 }
+
+/* --- Student Fee Section: Mobile Responsive --- */
+/* Hide the mobile-only "Paid" column on desktop */
+.fee-col-paid-mobile {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  /* Hide Balance card in current month overview */
+  .fee-balance-card {
+    display: none !important;
+  }
+
+  /* Hide Balance and Status columns in monthly breakdown */
+  .fee-col-balance,
+  .fee-col-status {
+    display: none !important;
+  }
+
+  /* Show the mobile-only Paid column */
+  .fee-col-paid-mobile {
+    display: block !important;
+  }
+
+  /* Adjust grid to 3 columns: Month, Fee/Month, Paid */
+  .fee-table-header,
+  .fee-table-row {
+    grid-template-columns: 1fr 90px 80px !important;
+  }
+}
+
+/* --- Instructor Attendance Page: Mobile Responsive --- */
+@media (max-width: 640px) {
+  .instructor-main {
+    padding: var(--space-3) !important;
+  }
+
+  /* Title */
+  .instructor-title {
+    font-size: 1.5rem !important;
+  }
+
+  /* Top bar: stack vertically */
+  .instructor-topbar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  /* Controls row: full width */
+  .instructor-controls {
+    width: 100%;
+    flex-direction: column !important;
+  }
+
+  .instructor-report-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .instructor-date-card {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .instructor-date-card .form-input {
+    flex: 1;
+    min-width: 0 !important;
+  }
+
+  /* Hide button text labels on mobile — show icon only */
+  .instructor-btn-text {
+    display: none !important;
+  }
+
+  /* Present/Absent buttons: icon-only, compact */
+  .instructor-status-btn {
+    padding: 10px 14px !important;
+    font-size: 0 !important;
+    gap: 0 !important;
+  }
+
+  .instructor-status-btn svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+
+  /* Mark All buttons: shorter text */
+  .instructor-markall-btn {
+    padding: 8px 12px !important;
+    font-size: 0.8rem !important;
+  }
+
+  /* Stats row */
+  .instructor-stats {
+    font-size: 0.8rem !important;
+  }
+}

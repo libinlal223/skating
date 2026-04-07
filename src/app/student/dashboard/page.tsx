@@ -227,7 +227,7 @@ export default function StudentDashboard() {
                 <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Paid</div>
                 <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.4rem', color: '#4CAF50' }}>₹{currentFee.paid.toLocaleString()}</div>
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.02)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div className="fee-balance-card" style={{ background: 'rgba(255,255,255,0.02)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)' }}>
                 <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Balance</div>
                 <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.4rem', color: (currentFee.balance || 0) > 0 ? '#E10600' : 'var(--text-primary)' }}>₹{(currentFee.balance || 0).toLocaleString()}</div>
               </div>
@@ -265,11 +265,12 @@ export default function StudentDashboard() {
             <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 'var(--space-3)', letterSpacing: '0.05em', fontWeight: 600 }}>Monthly Breakdown <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'inherit', fontWeight: 400 }}>({feeHistoryData.length} months)</span></h3>
             <div style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
               {/* Table Header */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 120px 130px', padding: '10px 16px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+              <div className="fee-table-header" style={{ display: 'grid', gridTemplateColumns: '1fr 100px 120px 130px', padding: '10px 16px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
                 <span>Month</span>
                 <span style={{ textAlign: 'right' }}>Fee/Month</span>
-                <span style={{ textAlign: 'right' }}>Balance</span>
-                <span style={{ textAlign: 'right' }}>Status</span>
+                <span className="fee-col-balance" style={{ textAlign: 'right' }}>Balance</span>
+                <span className="fee-col-status" style={{ textAlign: 'right' }}>Status</span>
+                <span className="fee-col-paid-mobile" style={{ textAlign: 'right' }}>Paid</span>
               </div>
               <div style={{ maxHeight: 360, overflowY: 'auto' }}>
                 {feeHistoryData.slice(0, feeHistoryLimit).map((p, j) => {
@@ -279,7 +280,7 @@ export default function StudentDashboard() {
                   const isFuture = p.month > currentMonthValue;
                   const isPaid = p.status === 'paid';
                   return (
-                    <div key={j} style={{
+                    <div key={j} className="fee-table-row" style={{
                       display: 'grid', gridTemplateColumns: '1fr 100px 120px 130px',
                       padding: '13px 16px', alignItems: 'center',
                       borderBottom: j < Math.min(feeHistoryLimit, feeHistoryData.length) - 1 ? '1px solid rgba(255,255,255,0.03)' : 'none',
@@ -296,12 +297,12 @@ export default function StudentDashboard() {
                       <div style={{ textAlign: 'right', fontFamily: 'var(--font-heading)', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
                         ₹{p.total.toLocaleString()}
                       </div>
-                      {/* Balance */}
-                      <div style={{ textAlign: 'right', fontFamily: 'var(--font-heading)', fontSize: '0.9rem', color: (p.balance || 0) > 0 ? '#E10600' : '#4CAF50' }}>
+                      {/* Balance — hidden on mobile */}
+                      <div className="fee-col-balance" style={{ textAlign: 'right', fontFamily: 'var(--font-heading)', fontSize: '0.9rem', color: (p.balance || 0) > 0 ? '#E10600' : '#4CAF50' }}>
                         {(p.balance || 0) > 0 ? `₹${(p.balance || 0).toLocaleString()}` : '—'}
                       </div>
-                      {/* Status Badge */}
-                      <div style={{ textAlign: 'right' }}>
+                      {/* Status Badge — hidden on mobile */}
+                      <div className="fee-col-status" style={{ textAlign: 'right' }}>
                         {isPaid ? (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#4CAF50', fontSize: '0.72rem', fontWeight: 700, background: 'rgba(76,175,80,0.12)', padding: '5px 10px', borderRadius: '20px', textTransform: 'uppercase', border: '1px solid rgba(76,175,80,0.25)' }}>
                             <Check size={12} /> Paid
@@ -311,6 +312,10 @@ export default function StudentDashboard() {
                             <X size={12} /> Pending
                           </span>
                         )}
+                      </div>
+                      {/* Paid — shown only on mobile */}
+                      <div className="fee-col-paid-mobile" style={{ textAlign: 'right', fontFamily: 'var(--font-heading)', fontSize: '0.9rem', color: '#4CAF50' }}>
+                        ₹{p.paid.toLocaleString()}
                       </div>
                     </div>
                   );
@@ -333,4 +338,3 @@ export default function StudentDashboard() {
     </div>
   );
 }
-

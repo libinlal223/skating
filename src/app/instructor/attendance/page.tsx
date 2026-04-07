@@ -264,7 +264,7 @@ export default function AttendanceSetup() {
         </button>
       </header>
 
-      <main style={{ padding: 'var(--space-5)', flex: 1, maxWidth: 1200, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column' }}>
+      <main className="instructor-main" style={{ padding: 'var(--space-5)', flex: 1, maxWidth: 1200, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column' }}>
         <AnimatePresence mode="wait">
           {!selectedBranch ? (
             // Branch Selection
@@ -297,24 +297,24 @@ export default function AttendanceSetup() {
             // Attendance Grid
             <motion.div key="attendance-view" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-5)', gap: 'var(--space-4)' }}>
+              <div className="instructor-topbar" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-5)', gap: 'var(--space-3)' }}>
                 <div>
-                  <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '2.2rem', margin: 0 }}>Mark Attendance</h2>
+                  <h2 className="instructor-title" style={{ fontFamily: 'var(--font-heading)', fontSize: '2.2rem', margin: 0 }}>Mark Attendance</h2>
                   <p style={{ color: 'var(--text-muted)', marginTop: '4px', fontSize: '1.1rem' }}>Location: <strong style={{ color: 'var(--text-primary)' }}>{selectedBranch}</strong></p>
                 </div>
 
-                <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={() => { setShowMonthlyReport(true); setReportDate(new Date()); }} className="btn btn-secondary" style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.9rem' }}>
-                    <FileText size={16} /> View Monthly Report
+                <div className="instructor-controls" style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button onClick={() => { setShowMonthlyReport(true); setReportDate(new Date()); }} className="btn btn-secondary instructor-report-btn" style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.9rem' }}>
+                    <FileText size={16} /><span className="instructor-btn-text">View Monthly Report</span>
                   </button>
-                  <div className="card" style={{ padding: 'var(--space-3) var(--space-4)', display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                  <div className="card instructor-date-card" style={{ padding: 'var(--space-3) var(--space-4)', display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                     <Calendar size={20} color="var(--accent-red)" />
                     <input
                       type="date"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
                       className="form-input"
-                      style={{ margin: 0, padding: '8px', minWidth: 180, WebkitAppearance: 'none' }}
+                      style={{ margin: 0, padding: '8px', minWidth: 150, WebkitAppearance: 'none' }}
                     />
                   </div>
                 </div>
@@ -330,23 +330,23 @@ export default function AttendanceSetup() {
                 <div className="card no-hover-card" style={{ padding: 'var(--space-4)', flex: 1, display: 'flex', flexDirection: 'column' }}>
 
                   {/* Actions Header */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-4)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-                      <button onClick={() => markAll('present')} style={{ background: 'rgba(76, 175, 80, 0.1)', border: '1px solid rgba(76, 175, 80, 0.3)', color: '#4CAF50', padding: '8px 16px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.2s' }}>
-                        <Check size={16} /> Mark All Present
+                  <div className="instructor-actions" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-4)', borderBottom: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
+                    <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                      <button onClick={() => markAll('present')} className="instructor-markall-btn" style={{ background: 'rgba(76, 175, 80, 0.1)', border: '1px solid rgba(76, 175, 80, 0.3)', color: '#4CAF50', padding: '8px 16px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.2s' }}>
+                        <Check size={16} /><span className="instructor-btn-text">Mark All</span> Present
                       </button>
-                      <button onClick={() => markAll('absent')} style={{ background: 'rgba(225, 6, 0, 0.1)', border: '1px solid rgba(225, 6, 0, 0.3)', color: '#E10600', padding: '8px 16px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.2s' }}>
-                        <X size={16} /> Mark All Absent
+                      <button onClick={() => markAll('absent')} className="instructor-markall-btn" style={{ background: 'rgba(225, 6, 0, 0.1)', border: '1px solid rgba(225, 6, 0, 0.3)', color: '#E10600', padding: '8px 16px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.2s' }}>
+                        <X size={16} /><span className="instructor-btn-text">Mark All</span> Absent
                       </button>
                     </div>
-                    <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                      Total Students: <strong style={{ color: 'var(--text-primary)' }}>{currentStudents.length}</strong>
+                    <div className="instructor-stats" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>{currentStudents.length}</strong> Total
                       &nbsp;·&nbsp;
-                      <strong style={{ color: '#4CAF50' }}>{Object.values(attendanceRecords).filter(v => v === 'present').length}</strong> Present
+                      <strong style={{ color: '#4CAF50' }}>{Object.values(attendanceRecords).filter(v => v === 'present').length}</strong> P
                       &nbsp;·&nbsp;
-                      <strong style={{ color: '#E10600' }}>{Object.values(attendanceRecords).filter(v => v === 'absent').length}</strong> Absent
+                      <strong style={{ color: '#E10600' }}>{Object.values(attendanceRecords).filter(v => v === 'absent').length}</strong> A
                       {Object.keys(attendanceRecords).length < currentStudents.length && (
-                        <>&nbsp;·&nbsp;<strong style={{ color: 'var(--accent-yellow)' }}>{currentStudents.length - Object.keys(attendanceRecords).length}</strong> Unmarked</>
+                        <>&nbsp;·&nbsp;<strong style={{ color: 'var(--accent-yellow)' }}>{currentStudents.length - Object.keys(attendanceRecords).length}</strong> U</>
                       )}
                     </div>
                   </div>
@@ -380,9 +380,10 @@ export default function AttendanceSetup() {
                                 </div>
                               </td>
                               <td style={{ padding: 'var(--space-3)', textAlign: 'right' }}>
-                                <div style={{ display: 'inline-flex', gap: '10px' }}>
+                                <div style={{ display: 'inline-flex', gap: '8px' }}>
                                   <button
                                     onClick={() => handleSetAttendance(student.id, 'present')}
+                                    className="instructor-status-btn"
                                     style={{
                                       padding: '8px 18px', borderRadius: '8px',
                                       border: `1px solid ${isPresent ? '#4CAF50' : 'rgba(76,175,80,0.3)'}`,
@@ -392,10 +393,11 @@ export default function AttendanceSetup() {
                                       fontWeight: 600, fontSize: '0.9rem', transition: 'all 0.2s ease',
                                     }}
                                   >
-                                    <Check size={14} /> Present
+                                    <Check size={14} /><span className="instructor-btn-text">Present</span>
                                   </button>
                                   <button
                                     onClick={() => handleSetAttendance(student.id, 'absent')}
+                                    className="instructor-status-btn"
                                     style={{
                                       padding: '8px 18px', borderRadius: '8px',
                                       border: `1px solid ${isAbsent ? '#E10600' : 'rgba(225,6,0,0.3)'}`,
@@ -405,7 +407,7 @@ export default function AttendanceSetup() {
                                       fontWeight: 600, fontSize: '0.9rem', transition: 'all 0.2s ease',
                                     }}
                                   >
-                                    <X size={14} /> Absent
+                                    <X size={14} /><span className="instructor-btn-text">Absent</span>
                                   </button>
                                 </div>
                               </td>
