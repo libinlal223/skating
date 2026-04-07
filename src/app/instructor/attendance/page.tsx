@@ -178,10 +178,15 @@ export default function AttendanceSetup() {
       // 3. After fetching: Sort by sessionNumber ascending
       monthRecords.sort((a, b) => a.sessionNumber - b.sessionNumber);
 
-      // 4. Map results mapping sessionNumber 1 -> S1 ... 8 -> S8
+      // 4. Determine dynamic session count from actual records
+      const totalSessions = monthRecords.length > 0
+        ? Math.max(...monthRecords.map(r => r.sessionNumber))
+        : 0;
+
+      // Map results mapping sessionNumber 1 -> S1 ... N -> SN (dynamic)
       const report = currentStudents.map(student => {
-        const sessions = Array.from({ length: 8 }, (_, i) => {
-          const sessionNum = i + 1; // S1 through S8 mappings
+        const sessions = Array.from({ length: totalSessions }, (_, i) => {
+          const sessionNum = i + 1;
           const rec = monthRecords.find(r => r.sessionNumber === sessionNum);
           
           // Fill missing sessions as null
@@ -498,8 +503,8 @@ export default function AttendanceSetup() {
                   <thead>
                     <tr style={{ position: 'sticky', top: 0, background: 'var(--bg-card)', zIndex: 10 }}>
                       <th style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500, borderBottom: '1px solid rgba(255,255,255,0.05)', whiteSpace: 'nowrap' }}>Student</th>
-                      {[1, 2, 3, 4, 5, 6, 7, 8].map(session => (
-                        <th key={session} style={{ padding: '12px 8px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500, borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>S{session}</th>
+                      {monthlyReportData.length > 0 && monthlyReportData[0].sessions.map((_, i) => (
+                        <th key={i} style={{ padding: '12px 8px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500, borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>S{i + 1}</th>
                       ))}
                       <th style={{ padding: '12px 16px', textAlign: 'center', color: 'var(--text-primary)', fontWeight: 600, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>Total</th>
                     </tr>

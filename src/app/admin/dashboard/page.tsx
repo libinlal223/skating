@@ -130,7 +130,7 @@ export default function AdminDashboard() {
         role: 'student',
         studentId: studentForm.id,
         name: studentForm.name || 'New Student',
-        email: existing?.email || `${studentForm.phone.replace(/\\s+/g, '')}@student.com`,
+        email: existing?.email || `${studentForm.id}@smartwheels.com`,
         branchId: studentForm.branch || '',
         branch: branchName || '',
         age: studentForm.age,
@@ -849,11 +849,7 @@ export default function AdminDashboard() {
                     <div style={{ flex: 1 }}>
                       <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone Number</label>
                       <input type="text" className="form-input" placeholder="Enter phone number" value={studentForm.phone} onChange={e => setStudentForm({...studentForm, phone: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', position: 'relative', zIndex: 1 }} />
-                      {!isEditing && studentForm.phone && (
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, fontFamily: 'monospace' }}>
-                          📧 {studentForm.phone.replace(/\s+/g, '')}@student.com
-                        </div>
-                      )}
+
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 'var(--space-3)' }}>

@@ -170,7 +170,7 @@ export const createStudentAccount = async (
   const { studentId, name, phone, password, branchId, branch, age, monthlyFee } = input;
 
   // 1. Generate email from phone number
-  const email = `${phone.replace(/\s+/g, '')}@student.com`;
+  const email = `${studentId}@smartwheels.com`;
 
   // 2. Create a temporary secondary Firebase app so admin stays signed in
   const secondaryAppName = `secondary-${Date.now()}`;

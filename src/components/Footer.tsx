@@ -8,7 +8,7 @@ export default function Footer() {
   const currentYear = new Date().getFullYear();
   const pathname = usePathname();
 
-  if (pathname?.startsWith('/admin') || pathname?.startsWith('/instructor')) return null;
+  if (pathname?.startsWith('/admin') || pathname?.startsWith('/instructor') || pathname?.startsWith('/student')) return null;
 
   return (
     <footer className="footer">

@@ -21,7 +21,7 @@ export interface AttendanceRecord {
   id?: string;
   branchId: string;
   month: string;        // YYYY-MM
-  sessionNumber: number;// 1-8 within the month
+  sessionNumber: number;// auto-incremented within the month
   date: string;         // YYYY-MM-DD
   attendance: AttendanceEntry[];
   createdAt?: string;
@@ -57,11 +57,7 @@ export const saveAttendance = async (
       const existingDocRef = doc(db, COLLECTION, existingRecord.id!);
       await updateDoc(existingDocRef, { attendance: attendanceArray });
     } else {
-      // CREATE — limit to max 8 sessions
-      if (existingRecords.length >= 8) {
-        throw new Error("Maximum of 8 sessions per month is allowed.");
-      }
-      
+      // CREATE — unlimited sessions allowed
       // Determine sessionNumber (existing count + 1)
       const sessionNumber = existingRecords.length + 1;
 
