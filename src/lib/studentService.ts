@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth';
 import { initializeApp, deleteApp as deleteFirebaseApp } from 'firebase/app';
 import { db } from './firebase';
+import { serverTimestamp } from 'firebase/firestore';
 
 // ─── Helper: normalize branchId ───────────────────────────────────────────────
 // Old students had branchId stored as the branch display name ("kochi").
@@ -25,7 +26,6 @@ export const normalizeBranchId = (
   // If there's already a branch doc with this id, it's valid — return as-is.
   const byId = branches.find(b => b.id === rawBranchId);
   if (byId) return rawBranchId;
-  // Otherwise check if it matches a branch name and resolve to doc ID.
   const byName = branches.find(b => b.name.toLowerCase() === rawBranchId.toLowerCase());
   if (byName) {
     console.log(`[normalizeBranchId] Resolved legacy branchId "${rawBranchId}" → "${byName.id}"`);
@@ -49,6 +49,9 @@ export interface StudentProfile {
   phone?: string;
   monthlyFee?: number;
   batch?: string;
+  id?: string;
+  createdAt?: any;
+  password?: string;
 }
 
 export interface InstructorProfile {
@@ -86,6 +89,7 @@ export const getAllStudents = async (): Promise<StudentProfile[]> => {
     ]);
     const branches = branchSnap.docs.map(d => ({ id: d.id, name: (d.data() as any).name || '' }));
     console.log('[getAllStudents] Branches for normalization:', branches.map(b => `${b.name}=${b.id}`));
+    console.log('[getAllStudents] Fetched data length:', studentSnap.docs.length);
 
     return studentSnap.docs.map(d => {
       const data = d.data();
@@ -94,21 +98,21 @@ export const getAllStudents = async (): Promise<StudentProfile[]> => {
       const branchName = branches.find(b => b.id === resolvedBranchId)?.name || data.branch || rawBranchId;
       console.log(`[getAllStudents] Student ${data.studentId || d.id}: branchId "${rawBranchId}" → "${resolvedBranchId}"`);
       return {
-        uid:        data.uid        || d.id,
-        studentId:  data.studentId  || d.id,
+        uid: data.uid || d.id,
+        studentId: data.studentId || d.id,
         // UI accesses students via s.id — map studentId → id
-        id:         data.studentId  || d.id,
-        role:       'student' as const,
-        name:       data.name       || '',
-        email:      data.email      || '',
-        phone:      data.phone      || '',
-        branchId:   resolvedBranchId,
-        branch:     branchName,
-        age:        data.age        || '',
+        id: data.studentId || d.id,
+        role: 'student' as const,
+        name: data.name || '',
+        email: data.email || '',
+        phone: data.phone || '',
+        branchId: resolvedBranchId,
+        branch: branchName,
+        age: data.age || '',
         monthlyFee: data.monthlyFee || 6000,
-        password:   data.password   || '',
-        batch:      data.batch      || '',
-        createdAt:  data.createdAt  || '',
+        password: data.password || '',
+        batch: data.batch || '',
+        createdAt: data.createdAt || '',
       };
     });
   } catch (error) {
@@ -171,12 +175,12 @@ export const createStudentAccount = async (
   // 2. Create a temporary secondary Firebase app so admin stays signed in
   const secondaryAppName = `secondary-${Date.now()}`;
   const firebaseConfig = {
-    apiKey:            process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain:        process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId:         process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket:     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
     messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
   };
   const secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
   const secondaryAuth = getAuth(secondaryApp);
@@ -188,7 +192,7 @@ export const createStudentAccount = async (
     uid = credential.user.uid;
   } finally {
     // Always clean up the secondary app regardless of success/failure
-    await deleteFirebaseApp(secondaryApp).catch(() => {});
+    await deleteFirebaseApp(secondaryApp).catch(() => { });
   }
 
   // 4. Save student profile in /students/{studentId}
@@ -204,7 +208,7 @@ export const createStudentAccount = async (
     branch: branch || branchId || '',
     age: age || '',
     monthlyFee: monthlyFee || 6000,
-    createdAt: new Date().toISOString(),
+    createdAt: serverTimestamp(),
   };
   await setDoc(doc(db, 'students', studentId), studentData);
 
@@ -220,7 +224,7 @@ export const createStudentAccount = async (
     branch: branch || branchId || '',
     age: age || '',
     monthlyFee: monthlyFee || 6000,
-    createdAt: new Date().toISOString(),
+    createdAt: serverTimestamp(),
   });
 
   return { uid, email, password, name, studentId };

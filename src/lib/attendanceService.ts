@@ -6,6 +6,7 @@ import {
   addDoc,
   updateDoc,
   doc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -53,7 +54,7 @@ export const saveAttendance = async (
 
     if (existingRecord) {
       // UPDATE — reuse its sessionNumber
-      const existingDocRef = doc(db, COLLECTION, existingRecord.id);
+      const existingDocRef = doc(db, COLLECTION, existingRecord.id!);
       await updateDoc(existingDocRef, { attendance: attendanceArray });
     } else {
       // CREATE — limit to max 8 sessions
@@ -70,7 +71,7 @@ export const saveAttendance = async (
         month,
         sessionNumber, // Dynamic (existing count + 1)
         attendance: attendanceArray,
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
       });
     }
   } catch (error) {

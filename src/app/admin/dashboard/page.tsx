@@ -23,6 +23,7 @@ export default function AdminDashboard() {
   
   const [students, setStudents] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
+  const [visibleRecent, setVisibleRecent] = useState(5);
 
   // Fee management state
   const [expandedFeeStudent, setExpandedFeeStudent] = useState<string | null>(null);
@@ -83,8 +84,19 @@ export default function AdminDashboard() {
 
   const refreshAll = async () => {
     const [studentList, branchList] = await Promise.all([getAllStudents(), fetchBranches()]);
-    setStudents(studentList);
-    await refreshFees(studentList);
+    // Sort students by newest first based on createdAt
+    const sortedStudents = studentList.sort((a, b) => {
+      const getMs = (val: any) => {
+        if (!val) return 0;
+        if (typeof val === 'string') return new Date(val).getTime();
+        if (val.toMillis) return val.toMillis();
+        if (val.seconds) return val.seconds * 1000;
+        return 0;
+      };
+      return getMs(b.createdAt) - getMs(a.createdAt);
+    });
+    setStudents(sortedStudents);
+    await refreshFees(sortedStudents);
   };
 
   const refreshFees = async (studentList?: any[]) => {
@@ -126,8 +138,7 @@ export default function AdminDashboard() {
         monthlyFee: parseInt(studentForm.monthlyFee) || 6000,
       };
       await saveStudent(studentToSave);
-      const updated = await getAllStudents();
-      setStudents(updated);
+      await refreshAll();
       setShowStudentModal(false);
       return;
     }
@@ -151,8 +162,7 @@ export default function AdminDashboard() {
         monthlyFee: parseInt(studentForm.monthlyFee) || 6000,
       });
 
-      const updated = await getAllStudents();
-      setStudents(updated);
+      await refreshAll();
       setShowStudentModal(false);
       setNewCredentials(credentials);
       setShowCredentialsModal(true);
@@ -506,7 +516,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {students.slice(0, 5).map(s => (
+                    {students.slice(0, visibleRecent).map(s => (
                       <tr key={s.id} className="hover-row" style={{ transition: 'background 0.2s', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                         <td style={{ padding: '14px 8px', fontSize: '0.85rem', color: 'var(--accent-red)', fontWeight: 600 }}>{s.id}</td>
                         <td style={{ padding: '14px 8px', fontSize: '0.85rem' }}>{s.name}</td>
@@ -518,6 +528,26 @@ export default function AdminDashboard() {
                     ))}
                   </tbody>
                 </table>
+                {students.length > visibleRecent && (
+                  <div style={{ padding: 'var(--space-3)', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <button 
+                      onClick={() => setVisibleRecent(students.length)} 
+                      style={{ background: 'transparent', border: 'none', color: 'var(--accent-red)', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <ChevronDown size={16} /> Load All {students.length} Students
+                    </button>
+                  </div>
+                )}
+                {visibleRecent > 5 && (
+                  <div style={{ padding: 'var(--space-3)', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <button 
+                      onClick={() => setVisibleRecent(5)} 
+                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <ChevronUp size={16} /> Show Less
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -550,8 +580,15 @@ export default function AdminDashboard() {
                   </thead>
                   <tbody>
                     {students
+                      .filter(s => {
+                        console.log("Student:", s.name, s.branchId);
+                        if (!branchFilter) return true;
+                        const filterBranchName = branches.find((b: any) => b.id === branchFilter)?.name;
+                        return s.branchId === branchFilter || 
+                               s.branchId === filterBranchName || 
+                               (s.branch && filterBranchName && s.branch.toLowerCase() === filterBranchName.toLowerCase());
+                      })
                       .filter(s => (s.name || '').toLowerCase().includes(search.toLowerCase()) || (s.id || '').toLowerCase().includes(search.toLowerCase()))
-                      .filter(s => branchFilter ? s.branchId === branchFilter : true)
                       .map(s => (
                         <tr key={s.id} className="hover-row" style={{ transition: 'background 0.2s', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                           <td style={{ padding: '14px 8px', fontSize: '0.85rem', color: 'var(--accent-red)', fontWeight: 600 }}>{s.id}</td>
@@ -590,7 +627,13 @@ export default function AdminDashboard() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
                 {students
-                  .filter(s => feeBranchFilter ? s.branchId === feeBranchFilter : true)
+                  .filter(s => {
+                    if (!feeBranchFilter) return true;
+                    const filterBranchName = branches.find((b: any) => b.id === feeBranchFilter)?.name;
+                    return s.branchId === feeBranchFilter || 
+                           s.branchId === filterBranchName || 
+                           (s.branch && filterBranchName && s.branch.toLowerCase() === filterBranchName.toLowerCase());
+                  })
                   .map((s, i) => {
                     const currentFee = getStudentCurrentMonthFee(s.id);
                     const isPaid = currentFee ? currentFee.status === 'paid' : false;

@@ -5,6 +5,7 @@ import {
   addDoc,
   setDoc,
   deleteDoc,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -32,17 +33,44 @@ export const getAllBranches = async (): Promise<BranchProfile[]> => {
 };
 
 // ─── createBranch ─────────────────────────────────────────────────────────────
-// Adds a new branch document using addDoc (auto-generated Firestore ID).
+// Generates a sequential ID (B1, B2...) using a Firestore transaction.
 // Returns the new BranchProfile with the generated id.
 
 export const createBranch = async (
   data: Omit<BranchProfile, 'id'>
 ): Promise<BranchProfile> => {
   try {
-    const docRef = await addDoc(collection(db, 'branches'), data);
-    return { id: docRef.id, ...data };
+    const counterRef = doc(db, 'meta', 'counters');
+    
+    // Utilize a transaction to safely increment the branch counter
+    const newDocId = await runTransaction(db, async (transaction) => {
+      const counterDoc = await transaction.get(counterRef);
+      let nextCounter = 1;
+
+      if (counterDoc.exists()) {
+        const docData = counterDoc.data();
+        if (typeof docData.branchCounter === 'number') {
+          nextCounter = docData.branchCounter + 1;
+        }
+      }
+
+      // Automatically construct safe, sequential IDs: B1, B2, B3...
+      const branchId = `B${nextCounter}`;
+      
+      const newBranchRef = doc(db, 'branches', branchId);
+      
+      // Update the counter doc
+      transaction.set(counterRef, { branchCounter: nextCounter }, { merge: true });
+      
+      // Create the new branch at 'branches/B{x}'
+      transaction.set(newBranchRef, data);
+      
+      return branchId;
+    });
+
+    return { id: newDocId, ...data };
   } catch (error) {
-    console.error('[createBranch] Firestore error:', error);
+    console.error('[createBranch] Firestore transaction error:', error);
     throw error;
   }
 };

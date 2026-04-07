@@ -4,7 +4,8 @@ import {
   onAuthStateChanged,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
+import { normalizeBranchId } from './studentService';
 import { auth, db } from './firebase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -73,11 +74,23 @@ async function buildAppUser(firebaseUser: FirebaseUser): Promise<AppUser> {
     }
   }
 
+  let finalBranchId = data.branchId ?? fetchedBranchId ?? undefined;
+  
+  if (finalBranchId) {
+    try {
+      const branchSnap = await getDocs(collection(db, 'branches'));
+      const branches = branchSnap.docs.map(d => ({ id: d.id, name: (d.data() as any).name || '' }));
+      finalBranchId = normalizeBranchId(finalBranchId, branches);
+    } catch (err) {
+      console.error('[buildAppUser] Error fetching branches to normalize:', err);
+    }
+  }
+
   return {
     uid:       firebaseUser.uid,
     email:     firebaseUser.email,
     role:      data.role      as UserRole,
-    branchId:  data.branchId  ?? fetchedBranchId ?? undefined,
+    branchId:  finalBranchId,
     studentId: data.studentId ?? fetchedStudentId ?? undefined,
     name:      studentName    || (data.role === 'student' ? 'Unknown Student' : undefined),
   };
