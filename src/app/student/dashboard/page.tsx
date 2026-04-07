@@ -3,13 +3,17 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LogOut, MapPin, Clock, Calendar, DollarSign, Check, X, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getUsers, getAttendanceByMonth, getStudentFees, StudentFee, getBranches } from '@/utils/mockApi';
+import { getCurrentUser, logout as authLogout } from '@/lib/authService';
+import { getStudentAttendance, StudentSession } from '@/lib/attendanceService';
+import { getStudentFees, FeeRecord } from '@/lib/feeService';
 
 export default function StudentDashboard() {
   const router = useRouter();
   const [student, setStudent] = useState<any>(null);
-  const [monthlySessions, setMonthlySessions] = useState<{date: string | null, status: string | null}[]>([]);
-  const [fees, setFees] = useState<StudentFee[]>([]);
+  const [monthlySessions, setMonthlySessions] = useState<StudentSession[]>([]);
+  const [isLoadingAttendance, setIsLoadingAttendance] = useState(false);
+  const [fees, setFees] = useState<FeeRecord[]>([]);
+  const [isLoadingFees, setIsLoadingFees] = useState(false);
   const [feeHistoryLimit, setFeeHistoryLimit] = useState(5);
   const [reportDate, setReportDate] = useState<Date>(new Date());
 
@@ -19,86 +23,73 @@ export default function StudentDashboard() {
   const currentMonthValue = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
 
   useEffect(() => {
-    const id = localStorage.getItem('studentId');
-    if (!id) { router.push('/student/login'); return; }
-    
-    // 1. Fetch Student from Mock DB
-    const users = getUsers();
-    const s = users.find(st => st.id === id);
-    if (!s) { router.push('/student/login'); return; }
-    setStudent(s);
-    
-    // 3. Fetch Fees sorting desc
-    const studentFees = getStudentFees(id);
-    setFees(studentFees);
+    const initStudent = async () => {
+      try {
+        const appUser = await getCurrentUser();
+        if (!appUser || appUser.role !== 'student') {
+          router.push('/student/login');
+          return;
+        }
+        setStudent(appUser);
+
+        // Fetch fees from Firestore
+        setIsLoadingFees(true);
+        try {
+          // Changed to studentId specifically to match the admin dashboard keys and the Firestore student_fees collection.
+          const firestoreFees = await getStudentFees(appUser.studentId || appUser.uid || '');
+          setFees(firestoreFees);
+        } catch (err) {
+          console.error('Failed to load fees:', err);
+        } finally {
+          setIsLoadingFees(false);
+        }
+      } catch (err) {
+        console.error('Auth check failed:', err);
+        router.push('/student/login');
+      }
+    };
+    initStudent();
   }, [router]);
 
   useEffect(() => {
     if (!student) return;
-    
-    // correctly resolve branch ID
-    const branches = getBranches();
-    let branchId = student.branchId;
-    if (!branchId || !branches.some(b => b.id === branchId)) {
-      const match = branches.find(b => b.name === (student.branch || student.branchId));
-      branchId = match ? match.id : 'B1';
-    }
-    
-    // 2. Fetch Attendance for Selected Month
-    const branchMonthRecords = getAttendanceByMonth(branchId, attendanceMonthValue)
-      .sort((a, b) => a.sessionNumber - b.sessionNumber);
-    const mySessions = Array.from({ length: 8 }, (_, i) => {
-      const sessionNum = i + 1;
-      const rec = branchMonthRecords.find(r => r.sessionNumber === sessionNum);
-      if (!rec) return { date: null, status: null };
-      const stuRecord = rec.attendance.find(a => a.studentId === student.id);
-      return { date: rec.date, status: stuRecord ? stuRecord.status : 'absent' };
-    });
-    setMonthlySessions(mySessions);
+    const branchId = student.branchId || '';
+    const load = async () => {
+      setIsLoadingAttendance(true);
+      try {
+        const studentIdToUse = String(student.studentId || student.uid || '').trim();
+        const branchIdToUse = String(branchId).trim();
+        const monthToUse = String(attendanceMonthValue).trim();
+        
+        console.log('[StudentDashboard] Fetching attendance with:', { studentId: studentIdToUse, branchId: branchIdToUse, month: monthToUse });
+        
+        const sessions = await getStudentAttendance(studentIdToUse, branchIdToUse, monthToUse);
+        setMonthlySessions(sessions);
+      } catch (err) {
+        console.error('Failed to load student attendance:', err);
+      } finally {
+        setIsLoadingAttendance(false);
+      }
+    };
+    load();
   }, [student, attendanceMonthValue]);
 
   if (!student) return <div style={{ minHeight: '100vh', background: 'var(--bg-primary)' }} />;
 
-  const presentCount = monthlySessions.filter(a => a.status === 'present' || a.status === 'late').length;
-  const conductedSessions = monthlySessions.filter(a => a.status !== null).length;
+  const presentCount = monthlySessions.filter(a => a.status === 'present').length;
+  const conductedSessions = monthlySessions.length;
   const attendPercent = conductedSessions === 0 ? 0 : Math.round((presentCount / conductedSessions) * 100);
 
-  const handleLogout = () => { localStorage.removeItem('studentId'); router.push('/student/login'); };
+  const handleLogout = async () => {
+    try { await authLogout(); } catch (_) {}
+    router.push('/student/login');
+  };
   
-  // Generate Fee History Data
-  const feeHistoryData = (() => {
-    const allMonthsToShow = new Set<string>();
-    
-    // Add all months from Launch (April 2026) to Current Month
-    const d = new Date(2026, 3, 1); // April 1, 2026
-    const end = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-    while (d.getTime() <= end.getTime()) {
-      const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      allMonthsToShow.add(m);
-      d.setMonth(d.getMonth() + 1);
-    }
-    
-    // Ensure current month is always present
-    allMonthsToShow.add(currentMonthValue);
+  // Generate Fee History Data natively from Firestore query returns
+  const feeHistoryData = fees;
 
-    // Add any future months from `fees` array if fee record exists
-    fees.forEach(f => {
-      if (f.month > currentMonthValue) {
-        allMonthsToShow.add(f.month);
-      }
-    });
-
-    // Convert to array and map to fee records
-    const history = Array.from(allMonthsToShow).map(m => {
-      const record = fees.find(f => f.month === m);
-      return record || { month: m, total: student.monthlyFee || 6000, paid: 0, balance: student.monthlyFee || 6000, status: 'pending' };
-    });
-
-    // Sort descending (latest top / older bottom)
-    return history.sort((a, b) => b.month.localeCompare(a.month));
-  })();
-  // Determine current fee state reliably
-  const currentFee = fees.find(f => f.month === currentMonthValue) || { total: student.monthlyFee || 6000, paid: 0, balance: student.monthlyFee || 6000, payments: [], month: currentMonthValue, status: 'pending' };
+  // Determine current fee state reliably (latest month)
+  const currentFee = fees.length > 0 ? fees[0] : { total: student.monthlyFee || 6000, paid: 0, balance: student.monthlyFee || 6000, payments: [], month: currentMonthValue, status: 'pending' };
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', paddingBottom: 'var(--space-12)' }}>
@@ -111,11 +102,12 @@ export default function StudentDashboard() {
 
         {/* Header Profile Section */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="card" style={{ padding: 'var(--space-5)', marginBottom: 'var(--space-6)' }}>
-          <h1 style={{ fontFamily: 'var(--font-heading)', fontSize: '2.5rem', margin: '0 0 var(--space-2) 0', lineHeight: 1 }}>{student.name}</h1>
+          <h1 style={{ fontFamily: 'var(--font-heading)', fontSize: '2.5rem', margin: '0 0 var(--space-2) 0', lineHeight: 1 }}>{student?.name || 'Unknown Student'}</h1>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-4)', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><strong style={{ color: 'var(--text-primary)' }}>ID:</strong> {student.id}</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><MapPin size={16} color="var(--accent-red)"/> {student.branch}</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Clock size={16} color="var(--accent-yellow)"/> {student.batch}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><strong style={{ color: 'var(--text-primary)' }}>ID:</strong> {student?.studentId || student?.uid || 'N/A'}</div>
+            {student?.branchId && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><MapPin size={16} color="var(--accent-red)"/> {student.branchId}</div>
+            )}
           </div>
         </motion.div>
 
@@ -154,7 +146,7 @@ export default function StudentDashboard() {
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-3)', paddingLeft: '4px' }}>
                 {monthlySessions.map((s, idx) => s.date ? (
                   <span key={idx} style={{ fontSize: '0.7rem', background: 'rgba(255,255,255,0.05)', padding: '3px 8px', borderRadius: 4, color: 'var(--text-muted)' }}>
-                    S{idx + 1}: {s.date}
+                    S{s.sessionNumber}: {s.date}
                   </span>
                 ) : null)}
               </div>
@@ -166,8 +158,11 @@ export default function StudentDashboard() {
                 <thead>
                   <tr style={{ background: 'var(--bg-card)' }}>
                     <th style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500, borderBottom: '1px solid rgba(255,255,255,0.05)', whiteSpace: 'nowrap' }}>Student</th>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map(session => (
-                      <th key={session} style={{ padding: '12px 8px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500, borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>S{session}</th>
+                    {monthlySessions.length === 0 && (
+                      <th style={{ padding: '12px 8px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500, borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>No Sessions</th>
+                    )}
+                    {monthlySessions.map(session => (
+                      <th key={session.sessionNumber} style={{ padding: '12px 8px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500, borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>S{session.sessionNumber}</th>
                     ))}
                     <th style={{ padding: '12px 16px', textAlign: 'center', color: 'var(--text-primary)', fontWeight: 600, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>Total</th>
                   </tr>
@@ -176,16 +171,18 @@ export default function StudentDashboard() {
                   <tr style={{ borderBottom: 'none' }}>
                     <td style={{ padding: '16px', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', fontWeight: 600 }}>{student.name[0]}</div>
-                        {student.name}
+                        <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', fontWeight: 600 }}>{student?.name ? student.name[0] : '?'}</div>
+                        {student?.name || 'Unknown Student'}
                       </div>
                     </td>
+                    {monthlySessions.length === 0 && (
+                      <td style={{ padding: '12px 8px', textAlign: 'center', color: 'rgba(255,255,255,0.15)', fontSize: '0.75rem' }}>—</td>
+                    )}
                     {monthlySessions.map((sessionData, i) => {
-                      let status = sessionData ? sessionData.status : null;
-                      if (status === 'late') status = 'present';
+                      const status = sessionData ? sessionData.status : null;
                       
                       return (
-                        <td key={i} style={{ padding: '12px 8px', textAlign: 'center' }}>
+                        <td key={sessionData.sessionNumber || i} style={{ padding: '12px 8px', textAlign: 'center' }}>
                           {status === null ? (
                             <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.75rem' }}>—</span>
                           ) : (
@@ -219,11 +216,35 @@ export default function StudentDashboard() {
               <DollarSign size={24} color="var(--accent-yellow)" />
               <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.5rem', margin: 0, letterSpacing: '0.05em' }}>Fee Details</h2>
             </div>
+            
+            {/* Current Month Overview */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 'var(--space-3)', marginBottom: 'var(--space-5)' }}>
+              <div style={{ background: 'rgba(255,255,255,0.02)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Fee / Month</div>
+                <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.4rem', color: 'var(--text-primary)' }}>₹{currentFee.total.toLocaleString()}</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.02)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Paid</div>
+                <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.4rem', color: '#4CAF50' }}>₹{currentFee.paid.toLocaleString()}</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.02)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Balance</div>
+                <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.4rem', color: (currentFee.balance || 0) > 0 ? '#E10600' : 'var(--text-primary)' }}>₹{(currentFee.balance || 0).toLocaleString()}</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.02)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Status ({currentFee.month})</div>
+                <div>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: currentFee.status === 'paid' ? '#4CAF50' : '#E10600', fontSize: '0.75rem', fontWeight: 700, background: currentFee.status === 'paid' ? 'rgba(76,175,80,0.12)' : 'rgba(225,6,0,0.12)', padding: '6px 12px', borderRadius: '20px', textTransform: 'uppercase', border: currentFee.status === 'paid' ? '1px solid rgba(76,175,80,0.25)' : '1px solid rgba(225,6,0,0.25)' }}>
+                    {currentFee.status === 'paid' ? <><Check size={14} /> Paid</> : <><X size={14} /> Pending</>}
+                  </span>
+                </div>
+              </div>
+            </div>
 
             {/* Pending Months Summary Banner */}
             {(() => {
               const pendingMonths = feeHistoryData.filter(p => p.status === 'pending' && p.month <= currentMonthValue);
-              const totalPendingAmt = pendingMonths.reduce((sum, p) => sum + (p.balance || 0), 0);
+              const totalPendingAmt = pendingMonths.reduce((sum, p) => sum + ((p.total || 0) - (p.paid || 0)), 0);
               return (
                 <div style={{ marginBottom: 'var(--space-5)' }}>
                   <div style={{ padding: '14px 16px', borderRadius: 'var(--radius-md)', border: pendingMonths.length > 0 ? '1px solid rgba(225,6,0,0.3)' : '1px solid rgba(76,175,80,0.2)', background: pendingMonths.length > 0 ? 'rgba(225,6,0,0.07)' : 'rgba(76,175,80,0.05)', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -276,8 +297,8 @@ export default function StudentDashboard() {
                         ₹{p.total.toLocaleString()}
                       </div>
                       {/* Balance */}
-                      <div style={{ textAlign: 'right', fontFamily: 'var(--font-heading)', fontSize: '0.9rem', color: p.balance > 0 ? '#E10600' : '#4CAF50' }}>
-                        {p.balance > 0 ? `₹${p.balance.toLocaleString()}` : '—'}
+                      <div style={{ textAlign: 'right', fontFamily: 'var(--font-heading)', fontSize: '0.9rem', color: (p.balance || 0) > 0 ? '#E10600' : '#4CAF50' }}>
+                        {(p.balance || 0) > 0 ? `₹${(p.balance || 0).toLocaleString()}` : '—'}
                       </div>
                       {/* Status Badge */}
                       <div style={{ textAlign: 'right' }}>

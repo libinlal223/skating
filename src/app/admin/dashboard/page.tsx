@@ -3,7 +3,12 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Users, Calendar, DollarSign, GitBranch, LogOut, Plus, Search, Edit, Trash2, Check, X, ChevronDown, ChevronUp, Menu, LayoutDashboard, FileText, CreditCard, Pencil } from 'lucide-react';
-import { getUsers, getBranches, saveUser, deleteUser as deleteMockUser, saveBranch, deleteBranch, getAllFees, getStudentFees, updateFees } from '@/utils/mockApi';
+import { collection, addDoc, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { getCurrentUser, logout as authLogout } from '@/lib/authService';
+import { getAllStudents, saveStudent, deleteStudent, StudentProfile, createStudentAccount, CreatedStudentCredentials } from '@/lib/studentService';
+import { updateBranch, deleteBranch as deleteBranchFS, BranchProfile } from '@/lib/branchService';
+import { getStudentFees, updateStudentFee, FeeRecord, updateFee, deleteFeeRecord, payMultipleMonths } from '@/lib/feeService';
 
 type Tab = 'overview' | 'students' | 'fees' | 'branches';
 
@@ -23,7 +28,7 @@ export default function AdminDashboard() {
   const [expandedFeeStudent, setExpandedFeeStudent] = useState<string | null>(null);
   const [allFees, setAllFees] = useState<any[]>([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ studentId: '', month: '', total: '', paid: '', duration: '1' });
+  const [paymentForm, setPaymentForm] = useState({ studentId: '', month: '', total: '', paid: '', duration: '1', customDuration: '2' });
   const [feeBranchFilter, setFeeBranchFilter] = useState('');
   const [feeHistoryLimit, setFeeHistoryLimit] = useState(5);
 
@@ -35,18 +40,57 @@ export default function AdminDashboard() {
   const [studentForm, setStudentForm] = useState({ id: '', name: '', branch: '', age: '', phone: '', password: '', monthlyFee: '' });
   const [isEditing, setIsEditing] = useState(false);
 
+  // Credentials modal — shown after a new student is successfully created
+  const [showCredentialsModal, setShowCredentialsModal] = useState(false);
+  const [newCredentials, setNewCredentials] = useState<CreatedStudentCredentials | null>(null);
+  const [isCreatingStudent, setIsCreatingStudent] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
   const [branchForm, setBranchForm] = useState({ id: '', name: '', location: '', coach: '', phone: '' });
   const [isEditingBranch, setIsEditingBranch] = useState(false);
+  const [isSavingBranch, setIsSavingBranch] = useState(false);
+  const [branchSaveError, setBranchSaveError] = useState<string | null>(null);
 
   // Sync data on load
   useEffect(() => {
-    setStudents(getUsers().filter(u => u.role === 'student'));
-    setBranches(getBranches());
-    refreshFees();
-  }, []);
+    const init = async () => {
+      try {
+        const appUser = await getCurrentUser();
+        if (!appUser || appUser.role !== 'admin') {
+          router.push('/admin/login');
+          return;
+        }
+        await refreshAll();
+      } catch (err) {
+        console.error('Admin auth init failed:', err);
+        router.push('/admin/login');
+      }
+    };
+    init();
+  }, [router]);
 
-  const refreshFees = () => {
-    setAllFees(getAllFees());
+  const fetchBranches = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'branches'));
+      const branchList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBranches(branchList);
+      return branchList;
+    } catch (err) {
+      console.error('Error fetching branches:', err);
+      return [];
+    }
+  };
+
+  const refreshAll = async () => {
+    const [studentList, branchList] = await Promise.all([getAllStudents(), fetchBranches()]);
+    setStudents(studentList);
+    await refreshFees(studentList);
+  };
+
+  const refreshFees = async (studentList?: any[]) => {
+    const list = studentList || students;
+    const allFeeArrays = await Promise.all(list.map(s => getStudentFees(s.id)));
+    setAllFees(allFeeArrays.flat());
   };
 
   const openStudentModal = (student: any = null) => {
@@ -60,34 +104,77 @@ export default function AdminDashboard() {
     setShowStudentModal(true);
   };
 
-  const handleSaveStudent = () => {
-    const newId = studentForm.id || 'SW-' + Date.now().toString().slice(-4);
-    
-    // Build user object structured for our mockApi
-    const userToSave = {
-      id: newId,
-      role: 'student' as const,
-      email: studentForm.name.toLowerCase().replace(/\s/g, '') + '@smartwheels.com', // mock email
-      name: studentForm.name || 'New Student',
-      branchId: studentForm.branch || 'B1',
-      branch: studentForm.branch, 
-      age: studentForm.age,
-      phone: studentForm.phone,
-      password: studentForm.password || '1234',
-      monthlyFee: parseInt(studentForm.monthlyFee) || 6000
-    };
+  const handleSaveStudent = async () => {
+    setCreateError(null);
+    const selectedBranch = branches.find((b: any) => b.id === studentForm.branch);
+    const branchName = selectedBranch ? selectedBranch.name : studentForm.branch;
 
-    saveUser(userToSave);
+    if (isEditing) {
+      // --- EDIT existing student (no Auth change needed) ---
+      const existing = students.find((s: any) => s.id === studentForm.id || s.studentId === studentForm.id);
+      const uid = existing?.uid || studentForm.id;
+      const studentToSave: Partial<StudentProfile> & { uid: string } = {
+        uid,
+        role: 'student',
+        studentId: studentForm.id,
+        name: studentForm.name || 'New Student',
+        email: existing?.email || `${studentForm.phone.replace(/\\s+/g, '')}@student.com`,
+        branchId: studentForm.branch || '',
+        branch: branchName || '',
+        age: studentForm.age,
+        phone: studentForm.phone,
+        monthlyFee: parseInt(studentForm.monthlyFee) || 6000,
+      };
+      await saveStudent(studentToSave);
+      const updated = await getAllStudents();
+      setStudents(updated);
+      setShowStudentModal(false);
+      return;
+    }
 
-    // Refresh UI
-    setStudents(getUsers().filter(u => u.role === 'student'));
-    setShowStudentModal(false);
+    // --- CREATE new student via Firebase Auth ---
+    if (!studentForm.phone) { setCreateError('Phone number is required to generate the student email.'); return; }
+    if (!studentForm.password || studentForm.password.length < 6) { setCreateError('Password must be at least 6 characters.'); return; }
+    if (!studentForm.id) { setCreateError('Student ID is required.'); return; }
+    if (!studentForm.name) { setCreateError('Student name is required.'); return; }
+
+    setIsCreatingStudent(true);
+    try {
+      const credentials = await createStudentAccount({
+        studentId: studentForm.id,
+        name: studentForm.name,
+        phone: studentForm.phone,
+        password: studentForm.password,
+        branchId: studentForm.branch || '',
+        branch: branchName || '',
+        age: studentForm.age,
+        monthlyFee: parseInt(studentForm.monthlyFee) || 6000,
+      });
+
+      const updated = await getAllStudents();
+      setStudents(updated);
+      setShowStudentModal(false);
+      setNewCredentials(credentials);
+      setShowCredentialsModal(true);
+    } catch (err: any) {
+      console.error('[handleSaveStudent] Firebase error:', err);
+      if (err.code === 'auth/email-already-in-use') {
+        setCreateError(`A student with phone ${studentForm.phone} already has an account.`);
+      } else if (err.code === 'auth/weak-password') {
+        setCreateError('Password is too weak. Use at least 6 characters.');
+      } else {
+        setCreateError(err.message || 'Failed to create student account. Please try again.');
+      }
+    } finally {
+      setIsCreatingStudent(false);
+    }
   };
 
-  const handleDeleteStudent = (id: string) => {
-    if(window.confirm('Are you sure you want to delete this student?')) {
-      deleteMockUser(id);
-      setStudents(getUsers().filter(u => u.role === 'student'));
+  const handleDeleteStudent = async (student: any) => {
+    if (window.confirm('Are you sure you want to delete this student?')) {
+      await deleteStudent(student.uid, student.id || student.studentId);
+      const updated = await getAllStudents();
+      setStudents(updated);
     }
   };
 
@@ -99,29 +186,57 @@ export default function AdminDashboard() {
       setIsEditingBranch(false);
       setBranchForm({ id: '', name: '', location: '', coach: '', phone: '' });
     }
+    setBranchSaveError(null);
     setShowBranchModal(true);
   };
 
-  const handleSaveBranch = () => {
-    const newId = isEditingBranch ? branchForm.id : 'B' + Date.now().toString().slice(-4);
-    const branchToSave = {
-      id: newId,
-      name: branchForm.name || 'New Branch',
-      location: branchForm.location,
-      coach: branchForm.coach,
-      phone: branchForm.phone,
-      students: 0,
-      batches: [],
-    };
-    saveBranch(branchToSave);
-    setBranches(getBranches());
-    setShowBranchModal(false);
+  const handleCreateBranch = async () => {
+    // Validate
+    if (!branchForm.name.trim()) {
+      setBranchSaveError('Branch name is required.');
+      return;
+    }
+    setBranchSaveError(null);
+    setIsSavingBranch(true);
+    try {
+      if (isEditingBranch) {
+        // UPDATE existing branch
+        await updateBranch({
+          id: branchForm.id,
+          name: branchForm.name.trim(),
+          location: branchForm.location,
+          coach: branchForm.coach,
+          phone: branchForm.phone,
+        });
+      } else {
+        // CREATE new branch via Firestore inline call per requirements
+        await addDoc(collection(db, "branches"), {
+          name: branchForm.name.trim(),
+          location: branchForm.location,
+          coach: branchForm.coach,
+          phone: branchForm.phone,
+        });
+      }
+      
+      // Close modal & clear form
+      setShowBranchModal(false);
+      setBranchForm({ id: '', name: '', location: '', coach: '', phone: '' });
+      
+      // Refresh branch list (call fetchBranches())
+      await fetchBranches();
+    } catch (err: any) {
+      console.error('[handleCreateBranch] Firestore error:', err);
+      setBranchSaveError(err.message || 'Failed to save branch. Please try again.');
+    } finally {
+      setIsSavingBranch(false);
+    }
   };
-  const handleDeleteBranch = (e: any, branchId: string) => {
+
+  const handleDeleteBranch = async (e: any, branchId: string) => {
     e.stopPropagation();
     if (window.confirm('Are you sure you want to delete this branch?')) {
-      deleteBranch(branchId);
-      setBranches(getBranches());
+      await deleteBranchFS(branchId);
+      await fetchBranches();
     }
   };
 
@@ -171,7 +286,7 @@ export default function AdminDashboard() {
 
     const history = Array.from(allMonthsToShow).map(m => {
       const record = studentFeesList.find(f => f.month === m);
-      return record || { month: m, total: feeAmount, paid: 0, balance: feeAmount, status: 'pending' };
+      return record || { month: m, total: feeAmount, paid: 0, status: 'pending' };
     });
 
     return history.sort((a, b) => b.month.localeCompare(a.month));
@@ -187,6 +302,7 @@ export default function AdminDashboard() {
       total: existing ? String(existing.total) : String(sObj?.monthlyFee || 6000),
       paid: '',
       duration: '1',
+      customDuration: '2'
     });
     setShowPaymentModal(true);
   };
@@ -201,31 +317,37 @@ export default function AdminDashboard() {
     return months;
   };
 
-  const handleAddPayment = () => {
-    const total = parseInt(paymentForm.total) || 0;
+  const handleAddPayment = async () => {
+    const rawTotal = parseInt(paymentForm.total);
+    const parsedTotal = !isNaN(rawTotal) ? rawTotal : undefined;
     const addPaid = parseInt(paymentForm.paid) || 0;
-    const duration = parseInt(paymentForm.duration) || 1;
+    const durationOffset = paymentForm.duration === 'custom' ? parseInt(paymentForm.customDuration) : parseInt(paymentForm.duration);
+    const duration = durationOffset || 1;
     const months = getMonthsFromStart(paymentForm.month, duration);
+    const studentId = paymentForm.studentId;
+    const student = students.find((s: any) => s.id === studentId || s.studentId === studentId);
+    const branchId = student?.branchId || student?.branch || '';
 
-    months.forEach(month => {
-      const existing = allFees.find((f: any) => f.studentId === paymentForm.studentId && f.month === month);
-      const currentPaid = existing ? existing.paid : 0;
-      // For multi-month: mark full total as paid per month
-      const newPaid = duration > 1 ? total : currentPaid + addPaid;
-      updateFees(paymentForm.studentId, month, { total, paid: newPaid });
-    });
+    if (duration > 1) {
+      const monthlyFeeForBulk = parsedTotal !== undefined ? parsedTotal : (student?.monthlyFee || 6000);
+      await payMultipleMonths(studentId, branchId, paymentForm.month, duration, monthlyFeeForBulk);
+    } else {
+      await updateFee(studentId, paymentForm.month, addPaid, parsedTotal);
+    }
 
-    refreshFees();
+    await refreshFees();
     setShowPaymentModal(false);
   };
 
-  const handleMarkAsPaid = (studentId: string) => {
+  const handleMarkAsPaid = async (studentId: string) => {
     const currentMonth = getCurrentMonth();
     const existing = allFees.find((f: any) => f.studentId === studentId && f.month === currentMonth);
-    const sObj = students.find(s => s.id === studentId);
-    const total = existing ? existing.total : (sObj?.monthlyFee || 6000);
-    updateFees(studentId, currentMonth, { total, paid: total });
-    refreshFees();
+    const student = students.find((s: any) => s.uid === studentId || s.studentId === studentId);
+    const resolvedStudentId = student?.studentId || student?.id || studentId;
+    const branchId = student?.branchId || '';
+    const total = existing ? existing.total : (student?.monthlyFee || 6000);
+    await updateStudentFee(resolvedStudentId, branchId, currentMonth, total, total);
+    await refreshFees();
   };
 
   const openEditFeeModal = (e: React.MouseEvent, studentId: string, studentName: string, feeRow: any) => {
@@ -240,29 +362,31 @@ export default function AdminDashboard() {
     setShowEditFeeModal(true);
   };
 
-  const handleSaveEditFee = () => {
+  const handleSaveEditFee = async () => {
     const total = parseInt(editFeeForm.total) || 0;
     const paid = parseInt(editFeeForm.paid) || 0;
-    updateFees(editFeeForm.studentId, editFeeForm.month, { total, paid });
-    refreshFees();
+    const student = students.find((s: any) => s.uid === editFeeForm.studentId || s.studentId === editFeeForm.studentId);
+    const resolvedStudentId = student?.studentId || student?.id || editFeeForm.studentId;
+    const branchId = student?.branchId || '';
+    await updateStudentFee(resolvedStudentId, branchId, editFeeForm.month, total, paid);
+    await refreshFees();
     setShowEditFeeModal(false);
   };
 
-  const handleDeleteFeeRow = (e: React.MouseEvent, studentId: string, feeRow: any) => {
+  const handleDeleteFeeRow = async (e: React.MouseEvent, studentId: string, feeRow: any) => {
     e.stopPropagation();
-    const sObj = students.find(s => s.id === studentId);
-    const defaultFee = sObj?.monthlyFee || 6000;
-    if (window.confirm(`Reset ${formatMonthLabel(feeRow.month)} fee record to pending?`)) {
-      updateFees(studentId, feeRow.month, { total: defaultFee, paid: 0 });
-      refreshFees();
+    const student = students.find((s: any) => s.uid === studentId || s.studentId === studentId);
+    const resolvedStudentId = student?.studentId || student?.id || studentId;
+    if (window.confirm(`Delete ${formatMonthLabel(feeRow.month)} fee record from database?`)) {
+      await deleteFeeRecord(resolvedStudentId, feeRow.month);
+      await refreshFees();
     }
   };
 
-  useEffect(() => {
-    if (localStorage.getItem('adminAuth') !== 'true') router.push('/admin/login');
-  }, [router]);
-
-  const handleLogout = () => { localStorage.removeItem('adminAuth'); router.push('/admin/login'); };
+  const handleLogout = async () => {
+    try { await authLogout(); } catch (_) {}
+    router.push('/admin/login');
+  };
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
@@ -409,7 +533,7 @@ export default function AdminDashboard() {
                   </div>
                   <select className="form-input" value={branchFilter} onChange={e => setBranchFilter(e.target.value)} style={{ width: 'auto', minWidth: 160 }}>
                     <option value="">All Branches</option>
-                    {branches.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                    {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
                 <button className="btn btn-primary" onClick={() => openStudentModal()} style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}><Plus size={16} /> Add Student</button>
@@ -427,7 +551,7 @@ export default function AdminDashboard() {
                   <tbody>
                     {students
                       .filter(s => (s.name || '').toLowerCase().includes(search.toLowerCase()) || (s.id || '').toLowerCase().includes(search.toLowerCase()))
-                      .filter(s => branchFilter ? (s.branch || s.branchId) === branchFilter : true)
+                      .filter(s => branchFilter ? s.branchId === branchFilter : true)
                       .map(s => (
                         <tr key={s.id} className="hover-row" style={{ transition: 'background 0.2s', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                           <td style={{ padding: '14px 8px', fontSize: '0.85rem', color: 'var(--accent-red)', fontWeight: 600 }}>{s.id}</td>
@@ -440,7 +564,7 @@ export default function AdminDashboard() {
                           <td style={{ padding: '14px 8px' }}>
                             <div style={{ display: 'flex', gap: 6 }}>
                               <button onClick={() => openStudentModal(s)} style={{ background: 'rgba(255,212,0,0.1)', border: '1px solid rgba(255,212,0,0.2)', color: '#FFD400', borderRadius: 'var(--radius-sm)', padding: '6px 10px', cursor: 'pointer', transition: 'all 0.2s' }} className="hover-btn-yellow"><Edit size={14} /></button>
-                              <button onClick={() => handleDeleteStudent(s.id)} style={{ background: 'rgba(225,6,0,0.1)', border: '1px solid rgba(225,6,0,0.2)', color: '#E10600', borderRadius: 'var(--radius-sm)', padding: '6px 10px', cursor: 'pointer', transition: 'all 0.2s' }} className="hover-btn-red"><Trash2 size={14} /></button>
+                              <button onClick={() => handleDeleteStudent(s)} style={{ background: 'rgba(225,6,0,0.1)', border: '1px solid rgba(225,6,0,0.2)', color: '#E10600', borderRadius: 'var(--radius-sm)', padding: '6px 10px', cursor: 'pointer', transition: 'all 0.2s' }} className="hover-btn-red"><Trash2 size={14} /></button>
                             </div>
                           </td>
                         </tr>
@@ -460,17 +584,17 @@ export default function AdminDashboard() {
               <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
                 <select className="form-input" value={feeBranchFilter} onChange={e => setFeeBranchFilter(e.target.value)} style={{ width: 'auto', minWidth: 200 }}>
                   <option value="">All Branches</option>
-                  {branches.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                  {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
                 {students
-                  .filter(s => feeBranchFilter ? (s.branch || s.branchId) === feeBranchFilter : true)
+                  .filter(s => feeBranchFilter ? s.branchId === feeBranchFilter : true)
                   .map((s, i) => {
                     const currentFee = getStudentCurrentMonthFee(s.id);
                     const isPaid = currentFee ? currentFee.status === 'paid' : false;
-                    const pendingAmt = currentFee ? currentFee.balance : 0;
+                    const pendingAmt = currentFee ? Math.max(0, (currentFee.total || 0) - (currentFee.paid || 0)) : 0;
                     const isExpanded = expandedFeeStudent === s.id;
                     const history = getStudentFeeHistory(s.id);
 
@@ -535,7 +659,7 @@ export default function AdminDashboard() {
                                   {[
                                     { label: 'Total Fee', value: `₹${currentFee.total.toLocaleString()}`, color: 'var(--text-primary)' },
                                     { label: 'Paid', value: `₹${currentFee.paid.toLocaleString()}`, color: '#4CAF50' },
-                                    { label: 'Balance', value: `₹${currentFee.balance.toLocaleString()}`, color: currentFee.balance > 0 ? '#E10600' : 'var(--text-muted)' },
+                                    { label: 'Balance', value: `₹${Math.max(0, (currentFee.total || 0) - (currentFee.paid || 0)).toLocaleString()}`, color: ((currentFee.total || 0) - (currentFee.paid || 0)) > 0 ? '#E10600' : 'var(--text-muted)' },
                                     { label: 'Status', value: currentFee.status === 'paid' ? 'PAID' : 'PENDING', color: currentFee.status === 'paid' ? '#4CAF50' : '#E10600' },
                                   ].map((item, idx) => (
                                     <div key={idx} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-sm)', padding: '12px 14px' }}>
@@ -663,7 +787,7 @@ export default function AdminDashboard() {
               <div style={{ position: 'relative', zIndex: 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: 'var(--space-3)' }}>
                   <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.2rem', letterSpacing: '0.05em' }}>{isEditing ? 'Edit Student' : 'Add Student'}</h3>
-                  <button type="button" onClick={() => setShowStudentModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 8, display: 'flex', alignItems: 'center', zIndex: 2 }}><X size={20} /></button>
+                  <button type="button" onClick={() => { setShowStudentModal(false); setCreateError(null); }} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 8, display: 'flex', alignItems: 'center', zIndex: 2 }}><X size={20} /></button>
                 </div>
                 <form onSubmit={(e) => { e.preventDefault(); handleSaveStudent(); }} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
                   <div>
@@ -682,6 +806,11 @@ export default function AdminDashboard() {
                     <div style={{ flex: 1 }}>
                       <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone Number</label>
                       <input type="text" className="form-input" placeholder="Enter phone number" value={studentForm.phone} onChange={e => setStudentForm({...studentForm, phone: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', position: 'relative', zIndex: 1 }} />
+                      {!isEditing && studentForm.phone && (
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, fontFamily: 'monospace' }}>
+                          📧 {studentForm.phone.replace(/\s+/g, '')}@student.com
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
@@ -693,7 +822,7 @@ export default function AdminDashboard() {
                       <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Branch</label>
                       <select className="form-input" value={studentForm.branch} onChange={e => setStudentForm({...studentForm, branch: e.target.value})} required style={{ width: '100%', boxSizing: 'border-box', position: 'relative', zIndex: 1 }}>
                         <option value="">Select branch</option>
-                        {branches.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                       </select>
                     </div>
                   </div>
@@ -701,7 +830,20 @@ export default function AdminDashboard() {
                     <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Monthly Fee (₹)</label>
                     <input type="number" className="form-input" placeholder="e.g. 6000" value={studentForm.monthlyFee} onChange={e => setStudentForm({...studentForm, monthlyFee: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', position: 'relative', zIndex: 1 }} />
                   </div>
-                  <button type="submit" className="btn btn-primary" style={{ marginTop: 'var(--space-3)', width: '100%', padding: '14px', position: 'relative', zIndex: 1 }}>Save Student Profile</button>
+                  {/* Error Banner */}
+                  {createError && (
+                    <div style={{ background: 'rgba(225,6,0,0.1)', border: '1px solid rgba(225,6,0,0.3)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '0.82rem', color: '#ff6b6b', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      ⚠️ {createError}
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={isCreatingStudent}
+                    style={{ marginTop: 'var(--space-3)', width: '100%', padding: '14px', position: 'relative', zIndex: 1, opacity: isCreatingStudent ? 0.7 : 1, cursor: isCreatingStudent ? 'not-allowed' : 'pointer' }}
+                  >
+                    {isCreatingStudent ? '⏳ Creating Account...' : isEditing ? 'Save Changes' : 'Create Student Account'}
+                  </button>
                 </form>
               </div>
             </motion.div>
@@ -784,19 +926,19 @@ export default function AdminDashboard() {
                     <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Duration</label>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
                       {[{ label: 'Monthly', val: '1' }, { label: 'Quarterly', val: '3' }, { label: 'Yearly', val: '12' }, { label: 'Custom', val: 'custom' }].map(opt => (
-                        <button key={opt.val} type="button" onClick={() => setPaymentForm({ ...paymentForm, duration: opt.val === 'custom' ? paymentForm.duration === '1' || paymentForm.duration === '3' || paymentForm.duration === '12' ? '2' : paymentForm.duration : opt.val })}
+                        <button key={opt.val} type="button" onClick={() => setPaymentForm({ ...paymentForm, duration: opt.val })}
                           style={{
                             padding: '8px 4px', fontSize: '0.72rem', fontWeight: 600, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                            border: (paymentForm.duration === opt.val || (opt.val === 'custom' && !['1','3','12'].includes(paymentForm.duration))) ? '1px solid var(--accent-red)' : '1px solid rgba(255,255,255,0.1)',
-                            background: (paymentForm.duration === opt.val || (opt.val === 'custom' && !['1','3','12'].includes(paymentForm.duration))) ? 'rgba(225,6,0,0.15)' : 'rgba(255,255,255,0.03)',
-                            color: (paymentForm.duration === opt.val || (opt.val === 'custom' && !['1','3','12'].includes(paymentForm.duration))) ? 'var(--accent-red)' : 'var(--text-muted)',
+                            border: paymentForm.duration === opt.val ? '1px solid var(--accent-red)' : '1px solid rgba(255,255,255,0.1)',
+                            background: paymentForm.duration === opt.val ? 'rgba(225,6,0,0.15)' : 'rgba(255,255,255,0.03)',
+                            color: paymentForm.duration === opt.val ? 'var(--accent-red)' : 'var(--text-muted)',
                             textTransform: 'uppercase', letterSpacing: '0.04em',
                           }}
                         >{opt.label}</button>
                       ))}
                     </div>
-                    {!['1','3','12'].includes(paymentForm.duration) && (
-                      <input type="number" min="2" max="12" className="form-input" placeholder="Number of months" value={paymentForm.duration} onChange={e => setPaymentForm({...paymentForm, duration: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', marginTop: 8 }} />
+                    {paymentForm.duration === 'custom' && (
+                      <input type="number" min="2" max="24" className="form-input" placeholder="Number of months" value={paymentForm.customDuration} onChange={e => setPaymentForm({...paymentForm, customDuration: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', marginTop: 8 }} />
                     )}
                   </div>
                   <div>
@@ -829,16 +971,23 @@ export default function AdminDashboard() {
                       <input autoFocus type="number" className="form-input" placeholder="Amount being paid now" value={paymentForm.paid} onChange={e => setPaymentForm({...paymentForm, paid: e.target.value})} required style={{ width: '100%', boxSizing: 'border-box', position: 'relative', zIndex: 1 }} />
                     </div>
                   )}
-                  {parseInt(paymentForm.duration) > 1 && (
-                    <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-sm)', padding: '12px 14px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                      <strong style={{ color: 'var(--text-primary)' }}>{paymentForm.duration} months</strong> will be marked as <strong style={{ color: '#4CAF50' }}>PAID</strong>
-                      <br /><span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{formatMonthLabel(paymentForm.month)} → {formatMonthLabel(getMonthsFromStart(paymentForm.month, parseInt(paymentForm.duration) || 1).slice(-1)[0] || paymentForm.month)}</span>
-                      <br /><span style={{ color: 'var(--accent-red)', fontSize: '0.8rem', fontWeight: 600, marginTop: 4, display: 'inline-block' }}>Total: ₹{((parseInt(paymentForm.total) || 0) * (parseInt(paymentForm.duration) || 1)).toLocaleString()}</span>
-                    </div>
-                  )}
-                  <button type="submit" className="btn btn-primary" style={{ marginTop: 'var(--space-2)', width: '100%', padding: '14px', position: 'relative', zIndex: 1 }}>
-                    {parseInt(paymentForm.duration) > 1 ? `Pay ${paymentForm.duration} Months` : 'Record Payment'}
-                  </button>
+                  {(() => {
+                    const activeDuration = paymentForm.duration === 'custom' ? parseInt(paymentForm.customDuration) || 1 : parseInt(paymentForm.duration) || 1;
+                    return (
+                      <>
+                        {activeDuration > 1 && (
+                          <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-sm)', padding: '12px 14px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                            <strong style={{ color: 'var(--text-primary)' }}>{activeDuration} months</strong> will be marked as <strong style={{ color: '#4CAF50' }}>PAID</strong>
+                            <br /><span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{formatMonthLabel(paymentForm.month)} → {formatMonthLabel(getMonthsFromStart(paymentForm.month, activeDuration).slice(-1)[0] || paymentForm.month)}</span>
+                            <br /><span style={{ color: 'var(--accent-red)', fontSize: '0.8rem', fontWeight: 600, marginTop: 4, display: 'inline-block' }}>Total: ₹{((parseInt(paymentForm.total) || 0) * activeDuration).toLocaleString()}</span>
+                          </div>
+                        )}
+                        <button type="submit" className="btn btn-primary" style={{ marginTop: 'var(--space-2)', width: '100%', padding: '14px', position: 'relative', zIndex: 1 }}>
+                          {activeDuration > 1 ? `Pay ${activeDuration} Months` : 'Record Payment'}
+                        </button>
+                      </>
+                    );
+                  })()}
                 </form>
               </div>
             </motion.div>
@@ -864,7 +1013,7 @@ export default function AdminDashboard() {
                   <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.2rem', letterSpacing: '0.05em' }}>{isEditingBranch ? 'Edit Branch' : 'Add Branch'}</h3>
                   <button type="button" onClick={() => setShowBranchModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 8, display: 'flex', alignItems: 'center', zIndex: 2 }}><X size={20} /></button>
                 </div>
-                <form onSubmit={(e) => { e.preventDefault(); handleSaveBranch(); }} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                <form onSubmit={(e) => { e.preventDefault(); handleCreateBranch(); }} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
                   <div>
                     <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Branch Name</label>
                     <input autoFocus type="text" className="form-input" placeholder="Enter branch name" value={branchForm.name} onChange={e => setBranchForm({...branchForm, name: e.target.value})} required style={{ width: '100%', boxSizing: 'border-box', position: 'relative', zIndex: 1 }} />

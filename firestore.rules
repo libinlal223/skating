@@ -1,0 +1,150 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HELPER FUNCTIONS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Returns the authenticated user's Firestore document from /users/{uid}
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Returns the role string: "admin" | "instructor" | "student"
+    function getUserRole() {
+      return getUserData().role;
+    }
+
+    // Returns the branchId the user belongs to
+    function getUserBranch() {
+      return getUserData().branchId;
+    }
+
+    // True if the student's own studentId matches the record's studentId field
+    function isStudentOwner(studentId) {
+      return getUserData().studentId == studentId;
+    }
+
+    // Shorthand role checks
+    function isAdmin() {
+      return request.auth != null && getUserRole() == 'admin';
+    }
+
+    function isInstructor() {
+      return request.auth != null && getUserRole() == 'instructor';
+    }
+
+    function isStudent() {
+      return request.auth != null && getUserRole() == 'student';
+    }
+
+    // Instructor is in the same branch as the resource
+    function isSameBranch(resourceBranchId) {
+      return getUserBranch() == resourceBranchId;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // /users/{userId}
+    // - Admins: full access
+    // - Users: can only read their own document (to bootstrap role resolution)
+    // ─────────────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if request.auth != null && (
+        isAdmin() ||
+        request.auth.uid == userId
+      );
+      allow write: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // /students/{studentId}
+    // - Admins: full access
+    // - Instructors: read-only for students in their branch
+    // - Students: no access
+    // ─────────────────────────────────────────────────────────────────────────
+    match /students/{studentId} {
+      allow read: if isAdmin() || (
+        isInstructor() && isSameBranch(resource.data.branchId)
+      );
+      allow write: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // /attendance_records/{recordId}
+    // - Admins: full access
+    // - Instructors: read + create + update for their branch only (no delete)
+    // - Students: read-only if their studentId appears in the attendance array
+    //
+    // NOTE: Firestore rules cannot query inside arrays with "in" semantics.
+    // The student read rule here allows reads at the document level only.
+    // Your frontend query must use branchId+month; the student's data is inside
+    // the attendance[] array — the actual per-student filter is enforced in
+    // your service code, not the rule (Firestore limitation with array fields).
+    // ─────────────────────────────────────────────────────────────────────────
+    match /attendance_records/{recordId} {
+      allow read: if isAdmin() || (
+        isInstructor() && isSameBranch(resource.data.branchId)
+      ) || (
+        // Student may read attendance documents for their own branch
+        isStudent() && isSameBranch(resource.data.branchId)
+      );
+
+      // Instructor can create new session records for their branch
+      allow create: if isInstructor()
+        && isSameBranch(request.resource.data.branchId)
+        && request.resource.data.keys().hasAll(['branchId', 'date', 'month', 'sessionNumber', 'attendance'])
+        && request.resource.data.branchId is string
+        && request.resource.data.date is string
+        && request.resource.data.month is string
+        && request.resource.data.sessionNumber is number;
+
+      // Instructor can update (overwrite attendance array) only for their branch
+      allow update: if isInstructor()
+        && isSameBranch(resource.data.branchId)
+        // Prevent changing branchId or date on update
+        && request.resource.data.branchId == resource.data.branchId
+        && request.resource.data.date == resource.data.date;
+
+      // Only admin can delete records
+      allow delete: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // /student_fees/{feeId}
+    // Document ID pattern: {studentId}_{month}  e.g. SW001_2026-04
+    //
+    // - Admins: full access
+    // - Instructors: NO access (fees are confidential)
+    // - Students: read-only their own (studentId match)
+    // ─────────────────────────────────────────────────────────────────────────
+    match /student_fees/{feeId} {
+      allow read: if isAdmin() || (
+        isStudent() && isStudentOwner(resource.data.studentId)
+      );
+      allow write: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // /branches/{branchId}
+    // - Admins: full access
+    // - Instructors: read their own branch only
+    // - Students: read their own branch only
+    // ─────────────────────────────────────────────────────────────────────────
+    match /branches/{branchId} {
+      allow read: if isAdmin() || (
+        request.auth != null && isSameBranch(branchId)
+      );
+      allow write: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DENY ALL — catch-all for any collection not listed above
+    // ─────────────────────────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+  }
+}

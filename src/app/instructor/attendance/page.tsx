@@ -1,9 +1,14 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { LogOut, Calendar, Users, ChevronLeft, ChevronRight, Check, X, Save, MapPin, FileText } from 'lucide-react';
-import { getBranches, getUsers, getAttendance, saveAttendance, AttendanceRecord, User } from '@/utils/mockApi';
+import { getCurrentUser, logout as authLogout } from '@/lib/authService';
+import { getAllStudents } from '@/lib/studentService';
+import { getAllBranches } from '@/lib/branchService';
+import { saveAttendance, getAttendanceByBranch, AttendanceRecord } from '@/lib/attendanceService';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 export default function AttendanceSetup() {
   const router = useRouter();
@@ -15,54 +20,73 @@ export default function AttendanceSetup() {
   // studentId -> 'present' | 'absent'
   const [attendanceRecords, setAttendanceRecords] = useState<Record<string, 'present' | 'absent'>>({});
   const [saved, setSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [showMonthlyReport, setShowMonthlyReport] = useState(false);
   const [isEditingReport, setIsEditingReport] = useState(false);
   const [reportDate, setReportDate] = useState<Date>(new Date());
-  const [allStudents, setAllStudents] = useState<User[]>([]);
+  const [allStudents, setAllStudents] = useState<any[]>([]);
   const [allAttendance, setAllAttendance] = useState<AttendanceRecord[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
 
   const monthKey = `${reportDate.getFullYear()}-${(reportDate.getMonth() + 1).toString().padStart(2, '0')}`;
   const monthName = reportDate.toLocaleString('default', { month: 'long', year: 'numeric' });
 
   // Auth check & load instructor branch
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const auth = localStorage.getItem('instructorAuth');
-    if (auth !== 'true') {
-      router.push('/admin/login');
-      return;
-    }
-    const branchId = localStorage.getItem('instructorBranch') || '';
-    setInstructorBranchId(branchId);
+    const init = async () => {
+      try {
+        const appUser = await getCurrentUser();
+        if (!appUser || appUser.role !== 'instructor') {
+          router.push('/instructor/login');
+          return;
+        }
+        setInstructorBranchId(appUser.branchId || '');
 
-    // Set default date to today
-    const today = new Date();
-    const offset = today.getTimezoneOffset();
-    const localDate = new Date(today.getTime() - offset * 60 * 1000).toISOString().split('T')[0];
-    setSelectedDate(localDate);
+        // Set default date to today
+        const today = new Date();
+        const offset = today.getTimezoneOffset();
+        const localDate = new Date(today.getTime() - offset * 60 * 1000).toISOString().split('T')[0];
+        setSelectedDate(localDate);
+
+        // Load branches from Firestore
+        const branchList = await getAllBranches();
+        setBranches(branchList);
+
+        // Load students from Firestore
+        const studentList = await getAllStudents();
+        setAllStudents(studentList);
+      } catch (err) {
+        console.error('Auth init failed:', err);
+        router.push('/admin/login');
+      }
+    };
+    init();
   }, [router]);
 
-  // Reload attendance from localStorage
-  const refreshAttendance = () => {
-    setAllAttendance(getAttendance());
+  // Fetch attendance from Firestore for the selected branch
+  const refreshAttendance = async (branchId: string) => {
+    if (!branchId) return;
+    try {
+      const records = await getAttendanceByBranch(branchId);
+      setAllAttendance(records);
+    } catch (err) {
+      console.error('Failed to load attendance:', err);
+    }
   };
 
-  useEffect(() => {
-    setAllStudents(getUsers().filter(u => u.role === 'student'));
-    refreshAttendance();
-  }, []);
 
-  // Students filtered by current branch — support both branchId as ID ("B1") and branchId as name ("Mumbai Central")
+  // Re-fetch attendance whenever the selected branch changes
+  useEffect(() => {
+    if (selectedBranchId) refreshAttendance(selectedBranchId);
+  }, [selectedBranchId]);
+
+  // Students filtered by current branch — only branchId (doc ID) is used.
+  // getAllStudents() normalizes legacy name-based branchIds at read time.
   const currentStudents = useMemo(() => {
-    if (!selectedBranchId && !selectedBranch) return [];
-    return allStudents.filter(s => {
-      const stu = s as any;
-      return (
-        s.branchId === selectedBranchId ||       // matches if stored as ID
-        s.branchId === selectedBranch ||          // matches if stored as name
-        stu.branch === selectedBranch             // matches legacy 'branch' field
-      );
-    });
+    if (!selectedBranchId) return [];
+    const filtered = allStudents.filter(s => s.branchId === selectedBranchId);
+    console.log(`[AttendanceSetup] Branch "${selectedBranch}" (id: ${selectedBranchId}) → ${filtered.length} students`);
+    return filtered;
   }, [allStudents, selectedBranchId, selectedBranch]);
 
   // When branch selected, pre-fill attendance from saved data for selected date
@@ -84,9 +108,8 @@ export default function AttendanceSetup() {
     setSaved(false);
   }, [selectedBranchId, selectedDate, currentStudents, allAttendance]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('instructorAuth');
-    localStorage.removeItem('instructorBranch');
+  const handleLogout = async () => {
+    try { await authLogout(); } catch (_) {}
     router.push('/admin/login');
   };
 
@@ -102,16 +125,24 @@ export default function AttendanceSetup() {
     setSaved(false);
   };
 
-  const handleSaveAttendance = () => {
+  const handleSaveAttendance = async () => {
     if (!selectedDate || !selectedBranchId) return;
     const attendanceArray = currentStudents.map(s => ({
       studentId: s.id,
       status: attendanceRecords[s.id] || 'absent',
     }));
-    saveAttendance(selectedBranchId, selectedDate, attendanceArray);
-    refreshAttendance();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    try {
+      setIsSaving(true);
+      await saveAttendance(selectedBranchId, selectedDate, attendanceArray);
+      await refreshAttendance(selectedBranchId);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      console.error('Failed to save attendance:', err);
+      alert('Failed to save attendance. Please check your connection and try again.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleBack = () => {
@@ -119,33 +150,68 @@ export default function AttendanceSetup() {
       setSelectedBranch(null);
       setSelectedBranchId('');
     } else {
-      router.push('/admin/login');
+      router.push('/instructor/login');
     }
   };
 
-  // Build monthly report: for each student, for sessions 1-8 (by session number in month)
-  const monthlyReportData = useMemo(() => {
-    if (!selectedBranchId) return [];
-    // Get all records for this branch in this month
-    const monthRecords = allAttendance
-      .filter(r => r.branchId === selectedBranchId && r.month === monthKey)
-      .sort((a, b) => a.sessionNumber - b.sessionNumber);
+  const [monthlyReportData, setMonthlyReportData] = useState<{student: any, sessions: ('present' | 'absent' | null)[], presentCount: number}[]>([]);
 
-    return currentStudents.map(student => {
-      const sessions = Array.from({ length: 8 }, (_, i) => {
-        const sessionNum = i + 1;
-        const rec = monthRecords.find(r => r.sessionNumber === sessionNum);
-        if (!rec) return null; // not conducted yet
-        const found = rec.attendance.find(a => a.studentId === student.id);
-        return found ? found.status : 'absent';
+  // Build monthly report by directly querying Firestore
+  const fetchMonthlyReport = useCallback(async () => {
+    if (!selectedBranchId) {
+      setMonthlyReportData([]);
+      return;
+    }
+    const selectedMonth = monthKey;
+    try {
+      // 1. Fetch from collection: attendance_records
+      const colRef = collection(db, 'attendance_records');
+      // 2. Query
+      const q = query(
+        colRef,
+        where('branchId', '==', selectedBranchId),
+        where('month', '==', selectedMonth)
+      );
+      const snap = await getDocs(q);
+      const monthRecords = snap.docs.map(doc => doc.data() as AttendanceRecord);
+
+      // 3. After fetching: Sort by sessionNumber ascending
+      monthRecords.sort((a, b) => a.sessionNumber - b.sessionNumber);
+
+      // 4. Map results mapping sessionNumber 1 -> S1 ... 8 -> S8
+      const report = currentStudents.map(student => {
+        const sessions = Array.from({ length: 8 }, (_, i) => {
+          const sessionNum = i + 1; // S1 through S8 mappings
+          const rec = monthRecords.find(r => r.sessionNumber === sessionNum);
+          
+          // Fill missing sessions as null
+          if (!rec) return null; 
+
+          // 5. For each session: Find studentId inside attendance array
+          const found = rec.attendance.find(a => a.studentId === student.id);
+          
+          // Set status = present / absent
+          return found ? found.status : 'absent';
+        });
+
+        // 6. Ensure total calculation works
+        const presentCount = sessions.filter(s => s === 'present').length;
+        return { student, sessions, presentCount };
       });
-      const presentCount = sessions.filter(s => s === 'present').length;
-      return { student, sessions, presentCount };
-    });
-  }, [allAttendance, selectedBranchId, monthKey, currentStudents]);
+
+      setMonthlyReportData(report);
+    } catch (err) {
+      console.error('Failed to fetch monthly report:', err);
+    }
+  }, [selectedBranchId, monthKey, currentStudents]);
+
+  // Fetch report whenever dependencies change (allAttendance acts as a re-fetch trigger when attendance is saved)
+  useEffect(() => {
+    fetchMonthlyReport();
+  }, [fetchMonthlyReport, allAttendance]);
 
   // Handle toggling a session in the monthly report edit mode
-  const handleToggleSessionReport = (studentId: string, sessionIndex: number) => {
+  const handleToggleSessionReport = async (studentId: string, sessionIndex: number) => {
     const monthRecords = allAttendance
       .filter(r => r.branchId === selectedBranchId && r.month === monthKey)
       .sort((a, b) => a.sessionNumber - b.sessionNumber);
@@ -154,18 +220,21 @@ export default function AttendanceSetup() {
     const rec = monthRecords.find(r => r.sessionNumber === sessionNum);
     if (!rec || !rec.date) return; // can't edit if session wasn't conducted
 
-    // Find current status and toggle
+    // Toggle the student's status
     const updated = rec.attendance.map(a => {
       if (a.studentId === studentId) {
         return { ...a, status: (a.status === 'present' ? 'absent' : 'present') as 'present' | 'absent' };
       }
       return a;
     });
-    saveAttendance(selectedBranchId, rec.date, updated);
-    refreshAttendance();
+    try {
+      await saveAttendance(selectedBranchId, rec.date, updated);
+      await refreshAttendance(selectedBranchId);
+    } catch (err) {
+      console.error('Failed to update session record:', err);
+    }
   };
 
-  const branches = getBranches();
   // Show all branches — instructor can mark attendance for any branch
   const availableBranches = branches;
 
@@ -346,12 +415,12 @@ export default function AttendanceSetup() {
                   <div style={{ marginTop: 'var(--space-5)', display: 'flex', justifyContent: 'flex-end', paddingTop: 'var(--space-4)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <button
                       onClick={handleSaveAttendance}
-                      disabled={!selectedDate || Object.keys(attendanceRecords).length < currentStudents.length}
+                      disabled={isSaving || !selectedDate || Object.keys(attendanceRecords).length < currentStudents.length}
                       className="btn btn-primary"
-                      style={{ padding: '12px 32px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '1rem', opacity: (!selectedDate || Object.keys(attendanceRecords).length < currentStudents.length) ? 0.5 : 1, cursor: (!selectedDate || Object.keys(attendanceRecords).length < currentStudents.length) ? 'not-allowed' : 'pointer' }}
+                      style={{ padding: '12px 32px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '1rem', opacity: (isSaving || !selectedDate || Object.keys(attendanceRecords).length < currentStudents.length) ? 0.5 : 1, cursor: (isSaving || !selectedDate || Object.keys(attendanceRecords).length < currentStudents.length) ? 'not-allowed' : 'pointer' }}
                     >
-                      {saved ? <Check size={20} /> : <Save size={20} />}
-                      {saved ? 'Saved Successfully!' : 'Save Attendance'}
+                      {isSaving ? <Save size={20} style={{ animation: 'spin 1s linear infinite' }} /> : saved ? <Check size={20} /> : <Save size={20} />}
+                      {isSaving ? 'Saving...' : saved ? 'Saved Successfully!' : 'Save Attendance'}
                     </button>
                   </div>
                 </div>

@@ -4,29 +4,33 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Shield, Lock, ArrowLeft } from 'lucide-react';
-import { loginUser } from '@/utils/mockApi';
+import { login } from '@/lib/authService';
 
 export default function AdminLogin() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
   const router = useRouter();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const user = loginUser(username, password);
+    setError('');
+    setLoading(true);
+    try {
+      const user = await login(username, password);
 
-    if (user?.role === 'admin') {
-      localStorage.setItem('adminAuth', 'true');
-      router.push('/admin/dashboard');
-    } else if (user?.role === 'instructor') {
-      // For instructor login we normally use a different page but they share the same portal gate here
-      localStorage.setItem('instructorAuth', 'true');
-      localStorage.setItem('instructorBranch', user.branchId || '');
-      localStorage.setItem('instructorId', user.id);
-      router.push('/instructor/attendance');
-    } else {
-      setError('Invalid credentials');
+      if (user.role === 'admin') {
+        router.push('/admin/dashboard');
+      } else if (user.role === 'instructor') {
+        router.push('/instructor/attendance');
+      } else {
+        setError('Access denied. This portal is for Admin and Instructors only.');
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -80,14 +84,12 @@ export default function AdminLogin() {
         </div>
         {error && <div style={{ padding: '10px', borderRadius: 'var(--radius-md)', background: 'rgba(225,6,0,0.15)', border: '1px solid rgba(225,6,0,0.3)', color: 'var(--accent-red)', fontSize: '0.8rem', textAlign: 'center', marginBottom: 'var(--space-3)' }}>{error}</div>}
         <form onSubmit={handleSubmit}>
-          <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="text" placeholder="admin@test.com" value={username} onChange={e => { setUsername(e.target.value); setError(''); }} required /></div>
-          <div className="form-group"><label className="form-label">Password</label><input className="form-input" type="password" placeholder="Enter password (1234)" value={password} onChange={e => { setPassword(e.target.value); setError(''); }} required /></div>
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: 'var(--space-2)', fontSize: '0.9rem', marginTop: 'var(--space-2)' }}><Lock size={16} /> Login</button>
+          <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" placeholder="admin@example.com" value={username} onChange={e => { setUsername(e.target.value); setError(''); }} required /></div>
+          <div className="form-group"><label className="form-label">Password</label><input className="form-input" type="password" placeholder="Enter password" value={password} onChange={e => { setPassword(e.target.value); setError(''); }} required /></div>
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: 'var(--space-2)', fontSize: '0.9rem', marginTop: 'var(--space-2)' }} disabled={loading}><Lock size={16} /> {loading ? 'Logging in…' : 'Login'}</button>
         </form>
         <p style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 'var(--space-3)' }}>
-          Demo: <strong style={{ color: 'var(--accent-yellow)' }}>admin@test.com</strong> / <strong style={{ color: 'var(--accent-yellow)' }}>1234</strong>
-          <br />
-          Instructor Demo: <strong style={{ color: 'var(--accent-yellow)' }}>ins@test.com</strong> / <strong style={{ color: 'var(--accent-yellow)' }}>1234</strong>
+          Use your Firebase Auth email and password.
         </p>
       </motion.div>
     </div>
